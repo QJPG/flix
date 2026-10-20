@@ -1,10 +1,14 @@
 package main
 
 import "core:time"
-import "core:fmt"
+import "core:os"
+
+time :: time
+os :: os
 
 exit:   bool = false
 target: f64  = 60
+directory: string
 
 import "vendor:sdl3"
 
@@ -23,6 +27,8 @@ Service_Type :: enum
 
 create :: proc()
 {
+    directory = os.get_executable_directory(context.allocator) or_else ODIN_ROOT
+
     error: Error = nil
 
     if !sdl3.Init(sdl3.INIT_VIDEO)    do push_service_error(&error, {.Video})
@@ -78,13 +84,14 @@ update :: proc(delta: f64)
 render :: proc(alpha: f64)
 {
     render_target_begin({})
-    viewport_begin({ 25.0, {0, 0, 0}, { 0, 0, 0 }, 1024, 600})
+    viewport_begin({ 100.0, {0, 0, 0}, { 0, 0, 0 }, 1024, 600})
     primitive_begin()
     primitive_shader(transform_shader, transform_uniforms)
-    primitive_vertex({ {0, 0, 0}, {1, 0, 0, 1}, {} })
-    primitive_vertex({ {1, 0, 0}, {1, 1, 0, 1}, {} })
-    primitive_vertex({ {1, 1, 0}, {1, 1, 1, 1}, {} })
-    primitive_vertex({ {0, 1, 0}, {0, 1, 1, 1}, {} })
+    primitive_textures({ default_texture })
+    primitive_vertex({ {-0.5,- 0.5, 0}, {1, 0, 0, 1}, { 0, 0 } })
+    primitive_vertex({ {+0.5, -0.5, 0}, {1, 1, 0, 1}, { 1, 0 } })
+    primitive_vertex({ {+0.5, +0.5, 0}, {1, 1, 1, 1}, { 1, 1 } })
+    primitive_vertex({ {-0.5, +0.5, 0}, {0, 1, 1, 1}, { 0, 1 } })
     primitive_end()
 
     when #defined(screen_render) do screen_render(alpha)
@@ -100,6 +107,8 @@ close :: proc()
     sdl3.GL_DestroyContext(gl_context)
     sdl3.DestroyWindow(window)
     sdl3.Quit()
+
+    delete(directory)
 }
 
 main :: proc()

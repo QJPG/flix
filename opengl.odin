@@ -3,27 +3,34 @@ package main
 import "vendor:OpenGL"
 import "core:math/linalg"
 import "core:math"
+import "core:image/png"
 
 gl :: OpenGL
 linalg :: linalg
 math :: math
+png :: png
 
 GL_MAX :: 3
 GL_MIN :: 1
 
 IMMEDIATE_MAX_VERTEX :: 33
+IMMEDIATE_MAX_TEXTURES :: 44
 
 immediate_buffer: u32
 immediate_vertex_array: u32
 immediate_data: [dynamic; IMMEDIATE_MAX_VERTEX]Vertex
 immediate_shader: Shader
 immediate_uniforms: Shader_Uniforms
+immediate_textures: []Texture
+immediate_textures_units: [dynamic; IMMEDIATE_MAX_TEXTURES]i32
 
 viewport_projection: matrix[4, 4]f32
 viewport_camera: matrix[4, 4]f32
 
 transform_shader: Shader
 transform_uniforms: Shader_Uniforms
+
+default_texture: Texture
 
 preload_gl :: proc()
 {
@@ -55,6 +62,7 @@ preload_gl :: proc()
         gl.TRUE,
         i32(size_of(Vertex)),
         3 * size_of(f32))
+    gl.EnableVertexAttribArray(2)
     gl.VertexAttribPointer(
         2,
         2,
@@ -93,13 +101,16 @@ preload_gl :: proc()
 
         precision mediump float;
 
+        uniform sampler2D Textures[4];
+
         in vec4 vColor;
         in vec2 vTexCoord;
     
         out vec4 fragColor;
 
         void main() {
-            fragColor = vColor;
+            vec4 color = texture(Textures[0], vTexCoord * vec2(1, -1));
+            fragColor = color * vColor;
         }
         `
 
@@ -107,6 +118,55 @@ preload_gl :: proc()
     }
 
     transform_uniforms = make(Shader_Uniforms)
+
+    {
+        fullpath := os.join_path({directory, "test.png"}, context.allocator) or_else "test.png"
+        defer delete(fullpath)
+
+        image: ^png.Image
+        image_error: png.Error
+        if image, image_error = png.load_from_file(fullpath, { .alpha_add_if_missing  }); image_error == nil
+        {
+            defer png.destroy(image)
+            default_texture = load_texture(raw_data(image.pixels.buf), { i32(image.width), i32(image.height) })
+        }
+    }
+}
+
+load_texture :: proc(data: rawptr, size: [2]i32, filter: Texture_Filter = .Linear, channels: Texture_Channels = .RGBA) -> (texture: Texture)
+{
+    filter_non_mipmap : i32
+    filter_mipmap : i32
+
+    switch filter
+    {
+    case .Linear:
+        filter_non_mipmap = gl.LINEAR
+        filter_mipmap = gl.LINEAR_MIPMAP_LINEAR
+
+    case .Nearest:
+        filter_non_mipmap = gl.NEAREST
+        filter_mipmap = gl.NEAREST_MIPMAP_NEAREST
+    }
+
+    channels_type: i32
+    switch channels
+    {
+    case .RED: channels_type = gl.RED
+    case .RGB: channels_type = gl.RGB
+    case .RGBA: channels_type = gl.RGBA
+    }
+
+    gl.GenTextures(1, &texture.id)
+    gl.BindTexture(gl.TEXTURE_2D, texture.id)
+    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT)
+    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter_mipmap)
+    gl.TexParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter_non_mipmap)
+    gl.TexImage2D(gl.TEXTURE_2D, 0, channels_type, size.x, size.y, 0, gl.RGBA, gl.UNSIGNED_BYTE, data)
+    gl.GenerateMipmap(gl.TEXTURE_2D)
+    gl.BindTexture(gl.TEXTURE_2D, 0)
+    return
 }
 
 compile_shader :: proc(vs: string, fs: string) -> (sh: Shader)
@@ -151,6 +211,7 @@ compile_shader :: proc(vs: string, fs: string) -> (sh: Shader)
 delete_gl :: proc()
 {
     delete(transform_uniforms)
+    gl.DeleteTextures(1, &default_texture.id)
     gl.DeleteProgram(transform_shader.id)
     gl.DeleteBuffers(1, &immediate_buffer)
     gl.DeleteVertexArrays(1, &immediate_vertex_array)
@@ -190,9 +251,9 @@ viewport_begin :: proc(mode: Viewport_Mode)
     gl.Viewport(0, 0, mode.width, mode.height)
 
     half_size := ([2]f32 {
-        f32(mode.width),
-        f32(mode.height),
-    } / 2) / mode.size
+        f32(mode.width) / mode.size,
+        f32(mode.height) / mode.size,
+    } / 2)
 
     viewport_projection = linalg.matrix_ortho3d(
         -half_size.x,
@@ -270,6 +331,17 @@ primitive_end :: proc()
                 1,
                 gl.FALSE,
                 raw_data(&viewport_camera))
+
+            if len(immediate_textures_units) > 0
+            {
+                textures_location := gl.GetUniformLocation(
+                                       immediate_shader.id, "Textures")
+
+                gl.Uniform1iv(
+                    textures_location,
+                    i32(len(immediate_textures_units)),
+                    &immediate_textures_units[0])
+            }
         }
 
         // TODO: Set ShaderUniforms uniforms here
@@ -280,6 +352,12 @@ primitive_end :: proc()
     gl.UseProgram(0)
     gl.BindVertexArray(0)
     gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+
+    for i in 0..<len(immediate_textures_units)
+    {
+        gl.ActiveTexture(gl.TEXTURE0 + u32(immediate_textures_units[i]))
+        gl.BindTexture(gl.TEXTURE_2D, 0)
+    }
 }
 
 Shader :: struct
@@ -293,4 +371,43 @@ primitive_shader :: proc(shader: Shader, uniforms: Shader_Uniforms)
 {
     immediate_shader = shader
     immediate_uniforms = uniforms
+}
+
+Texture_Filter :: enum
+{
+    Linear,
+    Nearest,
+}
+
+Texture_Channels :: enum
+{
+    RED,
+    RGB,
+    RGBA,
+}
+
+Texture :: struct
+{
+    id: u32,
+}
+
+primitive_textures :: proc(t: []Texture)
+{
+    clear(&immediate_textures_units)
+
+    miss: int
+    for i in 0..<len(t)
+    {
+        if !gl.IsTexture(t[i].id)
+        {
+            miss += 1
+            continue
+        }
+        unit := i - miss
+        gl.ActiveTexture(gl.TEXTURE0 + u32(unit))
+        gl.BindTexture(gl.TEXTURE_2D, t[i].id)
+        append(&immediate_textures_units, i32(unit))
+    }
+
+    immediate_textures = t
 }
