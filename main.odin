@@ -61,6 +61,7 @@ create :: proc()
     gl.load_up_to(3, 1, gl_proc_address)
 
     preload_gl()
+    preload_transformations()
 
     when #defined(screen_create) do screen_create()
 }
@@ -78,20 +79,32 @@ events :: proc()
 
 update :: proc(delta: f64)
 {
+    transform_uniforms["modulate"] = [4]f32 { 1, 0, 1, 1}
+    transform_values(&t)
     when #defined(screen_update) do screen_update(delta)
+
+    easing.flux_update(&transform_tweeners, delta)
+}
+
+t: Transform = {
+    time = 1.5,
+    xalign = 0.001,
+    yalign = 0,
+    loop = true
 }
 
 render :: proc(alpha: f64)
 {
+    immediate_uniforms = t.tween.uniforms
     render_target_begin({})
     viewport_begin({ 100.0, {0, 0, 0}, { 0, 0, 0 }, 1024, 600})
     primitive_begin()
     primitive_shader(transform_shader, transform_uniforms)
     primitive_textures({ default_texture })
-    primitive_vertex({ {-0.5,- 0.5, 0}, {1, 0, 0, 1}, { 0, 0 } })
-    primitive_vertex({ {+0.5, -0.5, 0}, {1, 1, 0, 1}, { 1, 0 } })
-    primitive_vertex({ {+0.5, +0.5, 0}, {1, 1, 1, 1}, { 1, 1 } })
-    primitive_vertex({ {-0.5, +0.5, 0}, {0, 1, 1, 1}, { 0, 1 } })
+    primitive_vertex({ {-0.5,- 0.5, 0} + {t.tween.xalign, t.tween.yalign, 0} * {1024, 600, 0}, {1, 0, 0, 1}, { 0, 0 } })
+    primitive_vertex({ {+0.5, -0.5, 0} + {t.tween.xalign, t.tween.yalign, 0} * {1024, 600, 0}, {1, 1, 0, 1}, { 1, 0 } })
+    primitive_vertex({ {+0.5, +0.5, 0} + {t.tween.xalign, t.tween.yalign, 0} * {1024, 600, 0}, {1, 1, 1, 1}, { 1, 1 } })
+    primitive_vertex({ {-0.5, +0.5, 0} + {t.tween.xalign, t.tween.yalign, 0} * {1024, 600, 0}, {0, 1, 1, 1}, { 0, 1 } })
     primitive_end()
 
     when #defined(screen_render) do screen_render(alpha)
@@ -103,6 +116,7 @@ close :: proc()
 {
     when #defined(screen_close) do screen_close()
 
+    delete_transformations()
     delete_gl()
     sdl3.GL_DestroyContext(gl_context)
     sdl3.DestroyWindow(window)

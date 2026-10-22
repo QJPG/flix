@@ -4,11 +4,13 @@ import "vendor:OpenGL"
 import "core:math/linalg"
 import "core:math"
 import "core:image/png"
+import "core:strings"
 
 gl :: OpenGL
 linalg :: linalg
 math :: math
 png :: png
+strings :: strings
 
 GL_MAX :: 3
 GL_MIN :: 1
@@ -26,9 +28,6 @@ immediate_textures_units: [dynamic; IMMEDIATE_MAX_TEXTURES]i32
 
 viewport_projection: matrix[4, 4]f32
 viewport_camera: matrix[4, 4]f32
-
-transform_shader: Shader
-transform_uniforms: Shader_Uniforms
 
 default_texture: Texture
 
@@ -71,53 +70,6 @@ preload_gl :: proc()
         i32(size_of(Vertex)),
         7 * size_of(f32))
     gl.BindVertexArray(0)
-
-    {
-        SHADER_VS ::
-        `
-        #version 310 es
-
-        in vec3 aPosition;
-        in vec4 aColor;
-        in vec2 aTexCoord;
-
-        uniform mat4 Projection;
-        uniform mat4 Camera;
-
-        out vec4 vColor;
-        out vec2 vTexCoord;
-
-        void main() {
-            gl_Position = Projection * Camera * vec4(aPosition, 1.0);
-
-            vColor = aColor;
-            vTexCoord = aTexCoord;
-        }
-        `
-
-        SHADER_FS ::
-        `
-        #version 310 es
-
-        precision mediump float;
-
-        uniform sampler2D Textures[4];
-
-        in vec4 vColor;
-        in vec2 vTexCoord;
-    
-        out vec4 fragColor;
-
-        void main() {
-            vec4 color = texture(Textures[0], vTexCoord * vec2(1, -1));
-            fragColor = color * vColor;
-        }
-        `
-
-        transform_shader = compile_shader(SHADER_VS, SHADER_FS)
-    }
-
-    transform_uniforms = make(Shader_Uniforms)
 
     {
         fullpath := os.join_path({directory, "test.png"}, context.allocator) or_else "test.png"
@@ -210,9 +162,8 @@ compile_shader :: proc(vs: string, fs: string) -> (sh: Shader)
 
 delete_gl :: proc()
 {
-    delete(transform_uniforms)
+    
     gl.DeleteTextures(1, &default_texture.id)
-    gl.DeleteProgram(transform_shader.id)
     gl.DeleteBuffers(1, &immediate_buffer)
     gl.DeleteVertexArrays(1, &immediate_vertex_array)
 }
@@ -293,6 +244,11 @@ Vertex :: struct
 primitive_begin :: proc()
 {
     clear(&immediate_data)
+    clear(&immediate_textures_units)
+
+    immediate_uniforms = nil
+    immediate_shader = {}
+    immediate_textures = nil
 }
 
 primitive_vertex :: proc(v: Vertex)
@@ -344,7 +300,25 @@ primitive_end :: proc()
             }
         }
 
-        // TODO: Set ShaderUniforms uniforms here
+        for k, v in immediate_uniforms
+        {
+            loc := gl.GetUniformLocation(
+                     immediate_shader.id, strings.unsafe_string_to_cstring(k))
+
+            switch _v in v
+            {
+            case f32: gl.Uniform1f(loc, _v)
+            case i32: gl.Uniform1i(loc, _v)
+
+            case [2]f32: gl.Uniform2f(loc, _v.x, _v.y)
+            case [3]f32: gl.Uniform3f(loc, _v.x, _v.y, _v.z)
+            case [4]f32: gl.Uniform4f(loc, _v.x, _v.y, _v.z, _v.w)
+
+            case [2]i32: gl.Uniform2i(loc, _v.x, _v.y)
+            case [3]i32: gl.Uniform3i(loc, _v.x, _v.y, _v.z)
+            case [4]i32: gl.Uniform4i(loc, _v.x, _v.y, _v.z, _v.w)
+            }
+        }
     }
 
     gl.BindVertexArray(immediate_vertex_array)
